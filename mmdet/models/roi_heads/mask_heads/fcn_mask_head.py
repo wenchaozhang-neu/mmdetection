@@ -1,4 +1,5 @@
-import os
+# Copyright (c) OpenMMLab. All rights reserved.
+from warnings import warn
 
 import numpy as np
 import torch
@@ -16,56 +17,7 @@ BYTES_PER_FLOAT = 4
 # TODO: This memory limit may be too much or too little. It would be better to
 # determine it based on available resources.
 GPU_MEM_LIMIT = 1024**3  # 1 GB memory limit
-class Cross_conv(nn.Module):
-    def __init__(self):
-        super(Cross_conv, self).__init__()
-        self.conv2d_1_5 = nn.Conv2d(256, 32, kernel_size=1, padding=0)
-        self.conv2d_1_7 = nn.Conv2d(256, 32, kernel_size=1, padding=0)
-        self.conv2d_1_9 = nn.Conv2d(256, 32, kernel_size=1, padding=0)
-        self.conv2d_1_11 = nn.Conv2d(256, 32, kernel_size=1, padding=0)          
-        self.conv2d_5_0 = nn.Conv2d(256, 32, kernel_size=(1,3), padding=(0,int(3/2)))
-        self.conv2d_5_1 = nn.Conv2d(256, 32, kernel_size=(3,1), padding=(int(3/2),0))
-        self.conv2d_7_0 = nn.Conv2d(256, 32, kernel_size=(1,5), padding=(0,int(5/2)))
-        self.conv2d_7_1 = nn.Conv2d(256, 32, kernel_size=(5,1), padding=(int(5/2),0))
-        self.conv2d_9_0 = nn.Conv2d(256, 32, kernel_size=(1,7), padding=(0,int(7/2)))
-        self.conv2d_9_1 = nn.Conv2d(256, 32, kernel_size=(7,1), padding=(int(7/2),0))
-        self.conv2d_11_0 = nn.Conv2d(256, 32, kernel_size=(1,9), padding=(0,int(9/2)))
-        self.conv2d_11_1 = nn.Conv2d(256, 32, kernel_size=(9,1), padding=(int(9/2),0))
-        self.bn0 = nn.GroupNorm(4,32)
-        self.bn1 = nn.GroupNorm(4,32)
-        self.bn2 = nn.GroupNorm(4,32)
-        self.bn3 = nn.GroupNorm(4,32)
-        self.bn4 = nn.GroupNorm(4,32)
-        self.bn5 = nn.GroupNorm(4,32)
-        self.bn6 = nn.GroupNorm(4,32)
-        self.bn7 = nn.GroupNorm(4,32)
-        self.bn8 = nn.GroupNorm(4,32)
-        self.bn9 = nn.GroupNorm(4,32)
-        self.bn10 = nn.GroupNorm(4,32)
-        self.bn11 = nn.GroupNorm(4,32)
-        self.relu = nn.ReLU()
-    def forward(self, x):
-        
-        #x = torch.flatten(x, start_dim=2)
-        x5_3 = self.bn0(self.conv2d_1_5(x))
-        x5_0 = self.bn1(self.conv2d_5_0(x))
-        x5_1 = self.bn2(self.conv2d_5_1(x))
-        x5 = torch.cat((x5_3, (x5_0 + x5_1)), 1)
-        x7_3 = self.bn3(self.conv2d_1_7(x))
-        x7_0 = self.bn4(self.conv2d_7_0(x))
-        x7_1 = self.bn5(self.conv2d_7_1(x))
-        x7 = torch.cat((x7_3, (x7_0 + x7_1)), 1)
-        x9_3 = self.bn6(self.conv2d_1_9(x))
-        x9_0 = self.bn7(self.conv2d_9_0(x))
-        x9_1 = self.bn8(self.conv2d_9_1(x))
-        x9 = torch.cat((x9_3, (x9_0 + x9_1)), 1)
-        x11_3 = self.bn9(self.conv2d_1_11(x))
-        x11_0 = self.bn10(self.conv2d_11_0(x))
-        x11_1 = self.bn11(self.conv2d_11_1(x))
-        x11 = torch.cat((x11_3, (x11_0 + x11_1)), 1)
-        x = torch.cat((x5, x7, x9, x11), 1)
-        x = self.relu(x)
-        return x
+
 
 @HEADS.register_module()
 class FCNMaskHead(BaseModule):
@@ -159,13 +111,6 @@ class FCNMaskHead(BaseModule):
                                             logits_in_channel, out_channels, 1)
         self.relu = nn.ReLU(inplace=True)
         self.debug_imgs = None
-        self.conv1 = Cross_conv()
-        self.conv2 = Cross_conv()
-        self.conv3 = Cross_conv()
-        self.conv4 = Cross_conv()
-        self.conv5 = Cross_conv()
-        self.conv6 = Cross_conv()
-
 
     def init_weights(self):
         super(FCNMaskHead, self).init_weights()
@@ -174,31 +119,20 @@ class FCNMaskHead(BaseModule):
                 continue
             elif isinstance(m, CARAFEPack):
                 m.init_weights()
-            else:
+            elif hasattr(m, 'weight') and hasattr(m, 'bias'):
                 nn.init.kaiming_normal_(
                     m.weight, mode='fan_out', nonlinearity='relu')
                 nn.init.constant_(m.bias, 0)
 
     @auto_fp16()
     def forward(self, x):
-        #for conv in self.convs:
-        #    x = conv(x)
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.conv4(x) 
-        x = self.conv5(x)
-        x = self.conv6(x)
-
-
-
+        for conv in self.convs:
+            x = conv(x)
         if self.upsample is not None:
             x = self.upsample(x)
             if self.upsample_method == 'deconv':
                 x = self.relu(x)
         mask_pred = self.conv_logits(x)
-        #from tools.feature_visualization import draw_feature_map
-        #draw_feature_map(mask_pred.sigmoid())
         return mask_pred
 
     def get_targets(self, sampling_results, gt_masks, rcnn_train_cfg):
@@ -255,7 +189,7 @@ class FCNMaskHead(BaseModule):
             det_labels (Tensor): shape (n, )
             rcnn_test_cfg (dict): rcnn testing config
             ori_shape (Tuple): original image height and width, shape (2,)
-            scale_factor(float | Tensor): If ``rescale is True``, box
+            scale_factor(ndarray | Tensor): If ``rescale is True``, box
                 coordinates are divided by this scale factor to fit
                 ``ori_shape``.
             rescale (bool): If True, the resulting masks will be rescaled to
@@ -294,6 +228,7 @@ class FCNMaskHead(BaseModule):
         if isinstance(mask_pred, torch.Tensor):
             mask_pred = mask_pred.sigmoid()
         else:
+            # In AugTest, has been activated before
             mask_pred = det_bboxes.new_tensor(mask_pred)
 
         device = mask_pred.device
@@ -301,47 +236,24 @@ class FCNMaskHead(BaseModule):
                      ]  # BG is not included in num_classes
         bboxes = det_bboxes[:, :4]
         labels = det_labels
-        # No need to consider rescale and scale_factor while exporting to ONNX
-        if torch.onnx.is_in_onnx_export():
+
+        # In most cases, scale_factor should have been
+        # converted to Tensor when rescale the bbox
+        if not isinstance(scale_factor, torch.Tensor):
+            if isinstance(scale_factor, float):
+                scale_factor = np.array([scale_factor] * 4)
+                warn('Scale_factor should be a Tensor or ndarray '
+                     'with shape (4,), float would be deprecated. ')
+            assert isinstance(scale_factor, np.ndarray)
+            scale_factor = torch.Tensor(scale_factor)
+
+        if rescale:
             img_h, img_w = ori_shape[:2]
+            bboxes = bboxes / scale_factor.to(bboxes)
         else:
-            if rescale:
-                img_h, img_w = ori_shape[:2]
-            else:
-                if isinstance(scale_factor, float):
-                    img_h = np.round(ori_shape[0] * scale_factor).astype(
-                        np.int32)
-                    img_w = np.round(ori_shape[1] * scale_factor).astype(
-                        np.int32)
-                else:
-                    w_scale, h_scale = scale_factor[0], scale_factor[1]
-                    img_h = np.round(ori_shape[0] * h_scale.item()).astype(
-                        np.int32)
-                    img_w = np.round(ori_shape[1] * w_scale.item()).astype(
-                        np.int32)
-                scale_factor = 1.0
-
-            if not isinstance(scale_factor, (float, torch.Tensor)):
-                scale_factor = bboxes.new_tensor(scale_factor)
-            bboxes = bboxes / scale_factor
-
-        # support exporting to ONNX
-        if torch.onnx.is_in_onnx_export():
-            threshold = rcnn_test_cfg.mask_thr_binary
-            if not self.class_agnostic:
-                box_inds = torch.arange(mask_pred.shape[0])
-                mask_pred = mask_pred[box_inds, labels][:, None]
-            masks, _ = _do_paste_mask(
-                mask_pred, bboxes, img_h, img_w, skip_empty=False)
-            if threshold >= 0:
-                masks = (masks >= threshold).to(dtype=torch.bool)
-            else:
-                # TensorRT backend does not have data type of uint8
-                is_trt_backend = os.environ.get(
-                    'ONNX_BACKEND') == 'MMCVTensorRT'
-                target_dtype = torch.int32 if is_trt_backend else torch.uint8
-                masks = (masks * 255).to(dtype=target_dtype)
-            return masks
+            w_scale, h_scale = scale_factor[0], scale_factor[1]
+            img_h = np.round(ori_shape[0] * h_scale.item()).astype(np.int32)
+            img_w = np.round(ori_shape[1] * w_scale.item()).astype(np.int32)
 
         N = len(mask_pred)
         # The actual implementation split the input into chunks,
@@ -354,8 +266,14 @@ class FCNMaskHead(BaseModule):
         else:
             # GPU benefits from parallelism for larger chunks,
             # but may have memory issue
+            # the types of img_w and img_h are np.int32,
+            # when the image resolution is large,
+            # the calculation of num_chunks will overflow.
+            # so we need to change the types of img_w and img_h to int.
+            # See https://github.com/open-mmlab/mmdetection/pull/5191
             num_chunks = int(
-                np.ceil(N * img_h * img_w * BYTES_PER_FLOAT / GPU_MEM_LIMIT))
+                np.ceil(N * int(img_h) * int(img_w) * BYTES_PER_FLOAT /
+                        GPU_MEM_LIMIT))
             assert (num_chunks <=
                     N), 'Default GPU_MEM_LIMIT is too small; try increasing it'
         chunks = torch.chunk(torch.arange(N, device=device), num_chunks)
@@ -390,6 +308,37 @@ class FCNMaskHead(BaseModule):
         for i in range(N):
             cls_segms[labels[i]].append(im_mask[i].detach().cpu().numpy())
         return cls_segms
+
+    def onnx_export(self, mask_pred, det_bboxes, det_labels, rcnn_test_cfg,
+                    ori_shape, **kwargs):
+        """Get segmentation masks from mask_pred and bboxes.
+
+        Args:
+            mask_pred (Tensor): shape (n, #class, h, w).
+            det_bboxes (Tensor): shape (n, 4/5)
+            det_labels (Tensor): shape (n, )
+            rcnn_test_cfg (dict): rcnn testing config
+            ori_shape (Tuple): original image height and width, shape (2,)
+
+        Returns:
+            Tensor: a mask of shape (N, img_h, img_w).
+        """
+
+        mask_pred = mask_pred.sigmoid()
+        bboxes = det_bboxes[:, :4]
+        labels = det_labels
+        # No need to consider rescale and scale_factor while exporting to ONNX
+        img_h, img_w = ori_shape[:2]
+        threshold = rcnn_test_cfg.mask_thr_binary
+        if not self.class_agnostic:
+            box_inds = torch.arange(mask_pred.shape[0])
+            mask_pred = mask_pred[box_inds, labels][:, None]
+        masks, _ = _do_paste_mask(
+            mask_pred, bboxes, img_h, img_w, skip_empty=False)
+        if threshold >= 0:
+            # should convert to float to avoid problems in TRT
+            masks = (masks >= threshold).to(dtype=torch.float)
+        return masks
 
 
 def _do_paste_mask(masks, boxes, img_h, img_w, skip_empty=True):
